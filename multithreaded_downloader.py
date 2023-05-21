@@ -58,20 +58,35 @@ def range_download(session, url, save_name, s_pos, e_pos, pbar=None):
         print(f"File write error: {e}")
 
 
+# Function to get file size
+def get_filesize(session, url):
+    filesize = 0
+    try:
+        res = session.head(url)  # Get the headers of the URL
+        res.raise_for_status()  # Raise an exception if the status code is not ok
+        filesize = int(res.headers.get('Content-Length', 0))  # Get the file size from the headers
+    except requests.exceptions.RequestException:
+        try:
+            res = session.get(url, stream=True)  # Get the resource, but don't download yet
+            res.raise_for_status()  # Raise an exception if the status code is not ok
+            filesize = int(res.headers.get('Content-Length', 0))  # Get the file size from the headers
+            res.close()  # Close the connection
+        except requests.exceptions.RequestException:
+            pass
+    return filesize
+
+
 # Main function
 def main(url, save_name=None, chunk=8):
     if save_name is None:
         save_name = os.path.basename(url)  # Get the file name from the URL
+        if '?' in save_name:
+            save_name = save_name[:save_name.index('?')]  # Remove query string from the file name
 
     session = create_session()  # Create a session
 
-    try:
-        res = session.head(url)  # Get the headers of the URL
-        res.raise_for_status()  # Raise an exception if the status code is not ok
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed: {e}")
-        return
-    filesize = int(res.headers.get('Content-Length', 0))  # Get the file size from the headers
+    filesize = get_filesize(session, url)  # Get the file size
+
     if filesize == 0:  # If the file size is zero
         print("Content-Length header is missing or not an integer.")
         return
@@ -79,7 +94,7 @@ def main(url, save_name=None, chunk=8):
     divisional_ranges = calc_divisional_range(filesize, chunk)  # Calculate the divisional ranges
 
     # Create a progress bar
-    with tqdm(total=filesize, unit='B', unit_scale=True, desc=url.split('/')[-1]) as pbar:
+    with tqdm(total=filesize, unit='B', unit_scale=True, desc=save_name) as pbar:
         with ThreadPoolExecutor() as p:  # Create a ThreadPoolExecutor
             futures = [p.submit(range_download, session, url, save_name, s_pos, e_pos, pbar) for s_pos, e_pos in
                        divisional_ranges]  # Submit the tasks to the executor
@@ -100,4 +115,5 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--chunk", type=int, default=8,
                         help="The number of chunks to split the download into. Default: 8.")
     args = parser.parse_args()
+
     main(args.url, args.save_name, args.chunk)
